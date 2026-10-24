@@ -38,6 +38,7 @@ import android.view.animation.DecelerateInterpolator
 import androidx.appcompat.widget.PopupMenu
 import androidx.core.graphics.drawable.toBitmap
 import androidx.core.graphics.drawable.toDrawable
+import androidx.core.graphics.scale
 import androidx.core.net.toUri
 import androidx.core.view.GestureDetectorCompat
 import androidx.core.view.isVisible
@@ -138,6 +139,7 @@ class MainActivity : SimpleActivity(), FlingListener {
         private const val ANIMATION_DURATION = 150L
         private const val APP_DRAWER_CLOSE_DELAY = 300L
         private const val APP_DRAWER_STATE = "app_drawer_state"
+        private const val AVERAGE_COLOR_SAMPLE_SIZE = 32
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -652,8 +654,9 @@ class MainActivity : SimpleActivity(), FlingListener {
         binding.allAppsFragment.root.gotLaunchers(launchers)
         binding.widgetsFragment.root.getAppWidgets()
 
+        val installedPackages = launchers.map { it.packageName }.toHashSet()
         IconCache.launchers.map { it.packageName }.forEach { packageName ->
-            if (!launchers.map { it.packageName }.contains(packageName)) {
+            if (!installedPackages.contains(packageName)) {
                 launchersDB.deleteApp(packageName)
                 homeScreenGridItemsDB.deleteByPackageName(packageName)
             }
@@ -1138,7 +1141,7 @@ class MainActivity : SimpleActivity(), FlingListener {
     fun getAllAppLaunchers(): ArrayList<AppLauncher> {
         val hiddenIcons = hiddenIconsDB.getHiddenIcons().map {
             it.getIconIdentifier()
-        }
+        }.toHashSet()
 
         val allApps = ArrayList<AppLauncher>()
         val intent = Intent(Intent.ACTION_MAIN, null)
@@ -1404,7 +1407,14 @@ class MainActivity : SimpleActivity(), FlingListener {
     }
 
     // taken from https://gist.github.com/maxjvh/a6ab15cbba9c82a5065d
-    private fun calculateAverageColor(bitmap: Bitmap): Int {
+    private fun calculateAverageColor(source: Bitmap): Int {
+        // a downscaled copy is plenty for a placeholder color and avoids reading every pixel
+        val bitmap = if (source.width > AVERAGE_COLOR_SAMPLE_SIZE || source.height > AVERAGE_COLOR_SAMPLE_SIZE) {
+            source.scale(AVERAGE_COLOR_SAMPLE_SIZE, AVERAGE_COLOR_SAMPLE_SIZE)
+        } else {
+            source
+        }
+
         var red = 0
         var green = 0
         var blue = 0
@@ -1413,6 +1423,9 @@ class MainActivity : SimpleActivity(), FlingListener {
         var n = 0
         val pixels = IntArray(width * height)
         bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+        if (bitmap !== source) {
+            bitmap.recycle()
+        }
         var i = 0
         while (i < pixels.size) {
             val color = pixels[i]
