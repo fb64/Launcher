@@ -24,6 +24,7 @@ import android.graphics.drawable.Drawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.UserHandle
 import android.provider.Settings
 import android.provider.Telephony
 import android.telecom.TelecomManager
@@ -124,6 +125,11 @@ class MainActivity : SimpleActivity(), FlingListener {
     private var wallpaperColorChangeListener: OnColorsChangedListener? = null
     private var wallpaperSupportsDarkText: Boolean? = null
 
+    private var launcherAppsCallback: LauncherApps.Callback? = null
+
+    @Volatile
+    private var launchersNeedRefresh = true
+
     private lateinit var mDetector: GestureDetectorCompat
     private val binding by viewBinding(ActivityMainBinding::inflate)
 
@@ -182,6 +188,43 @@ class MainActivity : SimpleActivity(), FlingListener {
         }
 
         setupWallpaperColorListener()
+        setupPackageChangesListener()
+    }
+
+    // reloading every launcher is expensive, so only do it when installed apps actually change
+    private fun setupPackageChangesListener() {
+        val launcherApps = getSystemService(LAUNCHER_APPS_SERVICE) as LauncherApps
+        launcherAppsCallback = object : LauncherApps.Callback() {
+            override fun onPackageAdded(packageName: String, user: UserHandle) {
+                launchersNeedRefresh = true
+            }
+
+            override fun onPackageRemoved(packageName: String, user: UserHandle) {
+                launchersNeedRefresh = true
+            }
+
+            override fun onPackageChanged(packageName: String, user: UserHandle) {
+                launchersNeedRefresh = true
+            }
+
+            override fun onPackagesAvailable(
+                packageNames: Array<out String>,
+                user: UserHandle,
+                replacing: Boolean
+            ) {
+                launchersNeedRefresh = true
+            }
+
+            override fun onPackagesUnavailable(
+                packageNames: Array<out String>,
+                user: UserHandle,
+                replacing: Boolean
+            ) {
+                launchersNeedRefresh = true
+            }
+        }
+
+        launcherApps.registerCallback(launcherAppsCallback!!, Handler(Looper.getMainLooper()))
     }
 
     private fun setupWallpaperColorListener() {
@@ -267,6 +310,12 @@ class MainActivity : SimpleActivity(), FlingListener {
         }
 
         ensureBackgroundThread {
+            if (!launchersNeedRefresh) {
+                binding.homeScreenGrid.root.fetchGridItems()
+                return@ensureBackgroundThread
+            }
+
+            launchersNeedRefresh = false
             if (IconCache.launchers.isEmpty()) {
                 val hiddenIcons = hiddenIconsDB.getHiddenIcons().map {
                     it.getIconIdentifier()
@@ -311,6 +360,11 @@ class MainActivity : SimpleActivity(), FlingListener {
         if (isOreoMr1Plus() && wallpaperColorChangeListener != null) {
             WallpaperManager.getInstance(this)
                 .removeOnColorsChangedListener(wallpaperColorChangeListener!!)
+        }
+
+        if (launcherAppsCallback != null) {
+            (getSystemService(LAUNCHER_APPS_SERVICE) as LauncherApps)
+                .unregisterCallback(launcherAppsCallback!!)
         }
     }
 
@@ -909,6 +963,8 @@ class MainActivity : SimpleActivity(), FlingListener {
     }
 
     private fun launchSettings() {
+        // icons can be unhidden and drawer settings changed from there
+        launchersNeedRefresh = true
         startActivity(
             Intent(this@MainActivity, SettingsActivity::class.java)
         )
